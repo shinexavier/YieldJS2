@@ -21,67 +21,107 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.*/
 
 
-Array.prototype.getEnumerator = function () {
+Array.prototype.getEnumerator = function (debugMode) {
     "use strict";
     var inList = this,
         QueryBuilder = function () {
-            this.inList = inList;
-            this.outList = [];
             this.current = null;
-            this.index = 0;
+            this.index = -1;
             this.moveNext = null;
             this.toArray = null;
             this.reset = null;
-            this.filter = null;
-            this.unique = null;
+            this.where = null;
+            this.distinct = null;
             this.skip = null;
+            this.skipEvery = null;
+            this.skipWhile = skipWhile;
+            this.take = null;
+            this.takeWhile = null;
             this.order = null;
             this.transform = null;
         },
         it = new QueryBuilder(inList),
         yieldIndex = -1,
         iterStarted = false,//Composition Lock
+        outList = [],
+        exLog = console.log,
+        debug = {},
         getCurrentElement = function () {
-            console.log("getCurrentElement : ", it.current);
+            debug.log("getCurrentElement : ", it.current);
             return it.current;
         },
         evalNextElement = getCurrentElement,
-        unique = function () {
-            var getUniqueElement = function () {
-                console.log("getUniqueElement : ", it.current);
-                return (it.outList.indexOf(it.current) < 0) ? it.current : null;
+        distinct = function () {
+            var getDistinctElement = function () {
+                debug.log("getDistinctElement : ", it.current);
+                return (outList.indexOf(it.current) < 0) ? it.current : null;
             };
-            return composeEagerEvalMethods(getUniqueElement);
+            return composeEagerEvalMethods(getDistinctElement);
+        },
+        skipEvery = function (count) {
+            var getSkippedEveryElement = function () {
+                debug.log("getSkippedEveryElement : ",it.index, ((it.index % (count + 1)) === 0));
+                return ((it.index % (count + 1)) === 0) ? it.current : null;
+            };
+            return composeEagerEvalMethods(getSkippedEveryElement);
         },
         skip = function (count) {
             var getSkippedElement = function () {
-                console.log("getSkippedElement : ",it.index, ((it.index % (count + 1)) === 0));
-                return ((it.index % (count + 1)) === 0) ? it.current : null;
+                debug.log("getSkippedElement : ",it.index, (it.index > (count - 1)));
+                return (it.index > (count - 1)) ? it.current : null;
             };
-            return composeIterMethods(getSkippedElement);
+            return composeEagerEvalMethods(getSkippedElement);
+        },
+        skipWhile = function (condition) {
+            var predicate = true,
+                getSkippedWhileElement = function () {
+                    if (predicate) {
+                        predicate = condition(it.current);
+                    }
+                    debug.log("getSkippedWhileElement : ", predicate);
+                    return (predicate) ? null : it.current;
+                };
+            return composeEagerEvalMethods(getSkippedWhileElement);
+        },
+        take = function (count) {
+            var getTakenElement = function () {
+                debug.log("getTakenElement : ",it.index, (it.index < (count - 1)));
+                return (it.index < (count - 1)) ? it.current : null;
+            };
+            return composeEagerEvalMethods(getTakenElement);
+        },
+        takeWhile = function (condition) {
+            var predicate = true,
+                getTakenWhileElement = function () {
+                    if (predicate) {
+                        predicate = condition(it.current);
+                    }
+                    debug.log("getTakenWhileElement : ", predicate);
+                    return (predicate) ? it.current : null;
+                };
+            return composeEagerEvalMethods(getTakenWhileElement);
         },
         transform = function (select) {
             var getTransformedElement = function () {
-                console.log("getTransformedElement : ", select(it.current));
+                debug.log("getTransformedElement : ", select(it.current));
                 return select(it.current);
             };
             return composeIterMethods(getTransformedElement);
         },
-        filter = function (condition) {
+        where = function (condition) {
             var getFilteredElement = function () {
-                console.log("getFilteredElement : ", condition(it.current));
+                debug.log("getFilteredElement : ", condition(it.current));
                 return condition(it.current) ? it.current : null;
             };
             return composeIterMethods(getFilteredElement);
         },
         eagerEvaluate = function () {
-            console.log("eagerEvaluate-1...............................>",yieldIndex, inList);
-            //yieldIndex = -1;
+            debug.log("eagerEvaluate-START >>>>>>>>>>>>>>>>>>>>>>>>>",inList);
             reset();
             inList = toArray();
-            console.log("it.index &&&&&&&&&&&&&&&&&&&&&&&&&&  ", it.index);
             reset();
-            console.log("eagerEvaluate-2...............................>",yieldIndex,inList);
+            it.index += 1;
+            debug.log("eagerEvaluate-END <<<<<<<<<<<<<<<<<<<<<<<<<<<",inList);
         },
         composeEagerEvalMethods = function (fn) {
             if (!iterStarted) {//Lock Composition to prevent any side effects during Enumeration            
@@ -102,17 +142,18 @@ Array.prototype.getEnumerator = function () {
                 return evalNext();
             } else {
                 yieldIndex -= 1;//Prevents overflow
-                it.index -= 1;
+                //it.index -= 1;
                 return false;
             }
         },
         evalNext = function () {
             it.current = evalNextElement.apply(inList);
             if (it.current !== null) {
-                it.outList.push(it.current);
+                outList.push(it.current);
                 return true;
+            } else {
+                return moveNext();
             }
-            return moveNext();
         },
         composeIterMethods = function (fn, eagerEval) {
             if (!iterStarted) {//Lock Composition to prevent any side effects during Enumeration
@@ -121,18 +162,20 @@ Array.prototype.getEnumerator = function () {
                 if (eagerEval === true) {
                     eagerEvalStart = true;
                     evalNextElement = function () {
-                        var a = evalNextElement,
-                            b = yieldIndex,
-                            c = iterStarted;
+                        var evalNextElementPrev = evalNextElement,//Saving current state...
+                            yieldIndexPrev = yieldIndex,
+                            iterStartedPrev = iterStarted;
                         evalNextElement = evalNextElementTmp;
                         if (eagerEvalStart) {
                             eagerEvaluate.apply(inList);
                             eagerEvalStart = false;
                         }
-                        evalNextElement = a;
-                        yieldIndex = b;
-                        iterStarted = c;
-                        it.current = inList[yieldIndex];
+                        evalNextElement = evalNextElementPrev;//Restoring current state...
+                        yieldIndex = yieldIndexPrev;
+                        iterStarted = iterStartedPrev;
+                        if (!isYieldEmpty()) {
+                            it.current = inList[yieldIndex];
+                        }
                         return (it.current === null) ? null : fn.apply(inList);
                     };
                 } else {
@@ -148,44 +191,40 @@ Array.prototype.getEnumerator = function () {
             while (moveNext()) {
                 //Force chained evaluation of continuation methods (if any).
             }
-            return it.outList.slice();
+            return outList.slice();
         },
         reset = function () {
             yieldIndex = -1;
             iterStarted = false;//Release Composition Lock
-            it.index = 0;
-            it.outList.length = 0;
-            it.outList = [];
+            it.index = -1;
+            outList.length = 0;
+            outList = [];
             it.current = null;
         };
-    it.outList = [];
-    it.current = null;
-    it.moveNext = moveNext;
-    it.toArray = toArray;
-    it.reset = reset;
-    it.unique = unique;
-    it.filter = filter;
-    it.skip = skip;
-    it.transform = transform;
-    return it;
+    debug.log = function(msg) {
+        if (debugMode) {
+            exLog.apply(this, arguments);
+        }
+    };
+    it.current = null;//Returns the current Iterator Element
+    it.moveNext = moveNext;//Moves the Iterator Record Pointer to the Next Element in the input sequence
+    it.toArray = toArray;//Forces One round of Iteration and Returns the output sequence
+    it.reset = reset;//Resets the Iterator State to facilitate Re-use
+    it.distinct = distinct;//Returns a sequence that excludes duplicates
+    it.where = where;//Returns a subset of elements that satisfy a given condition
+    it.skip = skip;//Ignores the first count elements and returns the rest
+    it.skipEvery = skipEvery;//Ignores every 'n' elements denoted by count
+    it.skipWhile = skipWhile;//Ignores elements from the input sequence until the predicate is false, and then emits the rest
+    it.take = take;//Returns the first count elements and discards the rest
+    it.takeWhile = takeWhile;//Emits elements from the input sequence until the predicate is false
+    it.transform = transform;//Transforms the elements in the input sequence
+    return it;//Returns the Iterator object
 };
 
 //Test Harness
-function unique(context) {
-    "use strict";
-    return (context.outList.indexOf(context.current) < 0) ? context.current : null;
-}
-
 function square(val) {
     "use strict";
     return (val * val);
-}
-
-function filter(condition) {
-    "use strict";
-    return function (context) {
-        return condition(context.current) ? context.current : null;
-    };
 }
 
 function even(val) {
@@ -198,26 +237,13 @@ function reject4multiples(val) {
     return (val % 4 !== 0);
 }
 
-function skip(count) {
-    "use strict";
-    return function (context) {
-        //console.log(this.index.toString() + " : " + this.current.toString());
-        return ((context.index % (count + 1)) === 0) ? context.current : null;
-    };
-}
 
 var x = [1, 7, 5, 11, 2, 4, 3, 200, 1, 2, 3, 8, 6, 200],
-    continuation = x.getEnumerator().skip(2).unique().filter(reject4multiples).unique().transform(square).unique();//.toArray().getEnumerator();
-//console.log(continuation.filter(even).unique().toArray());
-//continuation.reset();
-//console.log(continuation.toArray());
-//continuation.reset();
+    continuation = x.getEnumerator(true).takeWhile(reject4multiples).transform(square).skip(3);
+
 while (continuation.moveNext()) {
-    console.log(continuation.current + " [" + continuation.index + "]");
-    //console.log(continuation.index);
+    console.log("OUT >> ",continuation.current);
 }
 console.log(continuation.toArray());
-console.log(continuation.outList);
-console.log(continuation.toArray());
-console.log(continuation.toArray());
+
 
